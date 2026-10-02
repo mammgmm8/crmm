@@ -138,6 +138,18 @@ export type NotificationRow = {
   created_at: string;
 };
 
+export type SalesOutcome = "no_answer" | "interested" | "visit_booked" | "not_interested";
+
+export type PushSubscriptionRow = {
+  organization_id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -148,6 +160,7 @@ export type Database = {
       leads: Table<LeadRow>;
       tasks: Table<TaskRow>;
       notifications: Table<NotificationRow>;
+      push_subscriptions: Table<PushSubscriptionRow>;
     };
     Views: Record<string, never>;
     Functions: {
@@ -220,6 +233,27 @@ export type Database = {
       get_impact_assumptions: {
         Args: {target_organization_id: string};
         Returns: Json;
+      };
+      log_sales_outcome: {
+        Args: {
+          target_organization_id: string;
+          target_lead_id: string;
+          target_interaction_id: string;
+          target_outcome: SalesOutcome;
+        };
+        Returns: undefined;
+      };
+      create_sales_invite: {
+        Args: {target_organization_id: string; target_token_hash: string};
+        Returns: string;
+      };
+      accept_organization_invite: {
+        Args: {invite_token: string};
+        Returns: string;
+      };
+      activate_default_lead_workflow: {
+        Args: {target_organization_id: string};
+        Returns: undefined;
       };
       save_impact_assumptions: {
         Args: {

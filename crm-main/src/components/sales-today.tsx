@@ -8,17 +8,14 @@ import {Icon} from "@/components/ui/icon";
 import {MotionItem, useListTransition, useOptimisticMutation} from "@/components/ui/motion";
 import {Tabs} from "@/components/ui/tabs";
 import {Toast} from "@/components/ui/toast";
-import {Badge, EmptyState, Select, StagePill} from "@/components/ui/primitives";
+import {PushReminderButton} from "@/components/push-reminder-button";
+import {Badge, EmptyState, StagePill} from "@/components/ui/primitives";
 import {createClient} from "@/lib/supabase/client";
-import {flushPendingMutations, queuePendingMutation, readPendingMutations, removePendingMutation, type PendingMutation} from "@/lib/offline-mutations";
-import type {LeadRow, TaskRow} from "@/lib/supabase/database";
+import {flushPendingMutations, queuePendingMutation, readPendingMutations, removePendingMutation} from "@/lib/offline-mutations";
+import type {LeadRow, SalesOutcome, TaskRow} from "@/lib/supabase/database";
 
 function successHaptic() {
   if (typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate(10);
-}
-
-function canQueueOffline(error?: {message: string}) {
-  return !navigator.onLine || Boolean(error && /fetch|network|timeout/i.test(error.message));
 }
 
 function looksOffline(error: {message: string}) {
@@ -90,34 +87,53 @@ function WhatsAppLeadRow({lead, locale, organizationId, onMessage, onOpenDetails
 }) {
   const t = useTranslations("dashboard");
   const {value: status, pending, mutate} = useOptimisticMutation(lead.status);
+  const [lastOutcome, setLastOutcome] = useState<SalesOutcome | null>(null);
   const visibleName = lead.full_name;
   const waPhone = lead.phone.replace(/\D/g, "");
+  const callPhone = lead.phone.replace(/[^\d+]/g, "");
   const waMessage = locale === "ar"
     ? `مرحبًا ${visibleName}، أتابع معك بخصوص اهتمامك العقاري. متى يناسبك أن نتواصل؟`
     : `Hello ${visibleName}, I’m following up on your property enquiry. When would be a good time to talk?`;
   const whatsappUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(waMessage)}`;
 
-  async function logOutcome(nextStatus: LeadRow["status"]) {
+  async function logOutcome(outcome: SalesOutcome) {
     const client = createClient();
+    const interactionId = crypto.randomUUID();
     let queued = false;
-    const queueKey = `lead:${organizationId}:${lead.id}`;
+    const queueKey = `interaction:${organizationId}:${interactionId}`;
+    const nextStatus = outcome === "not_interested" ? "lost" : outcome === "no_answer" ? "contacted" : "qualified";
     const result = await mutate(nextStatus, async () => {
+      const mutation = {
+        key: queueKey,
+        table: "lead_interactions" as const,
+        organizationId,
+        id: lead.id,
+        changes: {interactionId, outcome},
+      };
       if (!client || !navigator.onLine) {
-        if (!queuePendingMutation({key: queueKey, table: "leads", organizationId, id: lead.id, changes: {status: nextStatus}})) throw new Error("offline-storage-unavailable");
+        if (!queuePendingMutation(mutation)) throw new Error("offline-storage-unavailable");
         queued = true;
         return nextStatus;
       }
-      const {error} = await client.from("leads").update({status: nextStatus}).eq("id", lead.id).eq("organization_id", organizationId);
+      const {error} = await client.rpc("log_sales_outcome", {
+        target_organization_id: organizationId,
+        target_lead_id: lead.id,
+        target_interaction_id: interactionId,
+        target_outcome: outcome,
+      });
       if (error) {
-        if (!looksOffline(error) || !queuePendingMutation({key: queueKey, table: "leads", organizationId, id: lead.id, changes: {status: nextStatus}})) throw error;
+        if (!looksOffline(error) || !queuePendingMutation(mutation)) throw error;
         queued = true;
         return nextStatus;
       }
       removePendingMutation(queueKey);
       return nextStatus;
     });
-    if (result.ok && !queued) successHaptic();
-    onMessage(result.ok ? (queued ? t("savedOffline") : t("outcomeSaved")) : t("outcomeSaveError"), result.ok ? (queued ? "info" : "success") : "error", result.ok ? () => { void logOutcome(status); } : undefined);
+    if (result.ok) {
+      setLastOutcome(outcome);
+      if (!queued) successHaptic();
+    }
+    onMessage(result.ok ? (queued ? t("savedOffline") : t("outcomeSaved")) : t("outcomeSaveError"), result.ok ? (queued ? "info" : "success") : "error");
   }
 
   return <MotionItem className="whatsapp-lead-row" name={`lead-${lead.id}`}>
@@ -126,12 +142,16 @@ function WhatsAppLeadRow({lead, locale, organizationId, onMessage, onOpenDetails
       <span className="whatsapp-lead-meta" dir="ltr">{lead.phone}{lead.property_interest ? ` · ${lead.property_interest}` : ""}</span>
     </div>
     <div className="whatsapp-lead-actions">
+      <a aria-label={t("callLead", {name: visibleName})} className="secondary-button compact-button phone-action touch-target" href={`tel:${callPhone}`}>
+        <Icon name="call" size={18} />{t("callLeadAction")}
+      </a>
       <a className="secondary-button compact-button whatsapp-action touch-target" href={whatsappUrl} rel="noreferrer" target="_blank">
         <Icon name="send-message" size={18} />{t("openWhatsapp")}
       </a>
-      {status === "new"
-        ? <><button className="primary-button compact-button touch-target" disabled={pending} onClick={() => logOutcome("contacted")} type="button"><Icon name="check" size={18} />{t("logContact")}</button><Select aria-label={t("selectOutcome")} className="outcome-select" onChange={(event) => { if (event.currentTarget.value) void logOutcome(event.currentTarget.value as LeadRow["status"]); }} value=""><option value="">{t("otherOutcome")}</option><option value="qualified">{t("qualified")}</option><option value="won">{t("won")}</option><option value="lost">{t("lost")}</option></Select></>
-        : <StagePill stage={status === "won" ? "deal" : status === "lost" ? "lost" : "visit"} label={t(status)} />}
+    </div>
+    <div aria-label={t("selectOutcome")} className="sales-outcomes" role="group">
+      {(["no_answer", "interested", "visit_booked", "not_interested"] as const).map((outcome) => <button aria-pressed={lastOutcome === outcome} className={`sales-outcome-button${lastOutcome === outcome ? " sales-outcome-selected" : ""}`} disabled={pending} key={outcome} onClick={() => void logOutcome(outcome)} type="button">{t(outcome)}</button>)}
+      {!lastOutcome && <span className="sales-current-status"><StagePill stage={status === "won" ? "deal" : status === "lost" ? "lost" : "visit"} label={t(status)} /></span>}
     </div>
   </MotionItem>;
 }
@@ -161,8 +181,18 @@ export function SalesToday({
   const [toast, setToast] = useState<{message: string; tone: "success" | "error" | "info"; onUndo?: () => void} | null>(null);
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "queued" | "error">("idle");
   const isArriving = useListTransition(leads);
-  const activeTasks = tasks.filter((task) => !task.completed_at && (new Date(task.due_at).getTime() < currentTime || new Intl.DateTimeFormat("en-CA", {timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(task.due_at)) === todayDate));
-  const queueLeads = leads.filter((lead) => lead.status === "new");
+  const activeTasks = tasks.filter((task) => !task.completed_at && (new Date(task.due_at).getTime() < currentTime || new Intl.DateTimeFormat("en-CA", {timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(task.due_at)) === todayDate)).sort((first, second) => Date.parse(first.due_at) - Date.parse(second.due_at));
+  const taskUrgency = new Map<string, number>();
+  for (const task of activeTasks) {
+    const dueAt = Date.parse(task.due_at);
+    taskUrgency.set(task.lead_id, Math.min(taskUrgency.get(task.lead_id) ?? Number.POSITIVE_INFINITY, dueAt));
+  }
+  const todayLeads = leads.filter((lead) => lead.status !== "won" && lead.status !== "lost" && (taskUrgency.has(lead.id) || lead.status === "new"));
+  const todayItems = [
+    ...activeTasks.map((task) => ({kind: "task" as const, urgency: Date.parse(task.due_at), task})),
+    ...todayLeads.map((lead) => ({kind: "lead" as const, urgency: taskUrgency.get(lead.id) ?? Date.parse(lead.created_at), lead})),
+  ].sort((first, second) => first.urgency - second.urgency);
+  const queueLeads = leads.filter((lead) => lead.status === "new").sort((first, second) => (taskUrgency.get(first.id) ?? Number.POSITIVE_INFINITY) - (taskUrgency.get(second.id) ?? Number.POSITIVE_INFINITY) || Date.parse(first.created_at) - Date.parse(second.created_at));
   const notify = (message: string, tone: "success" | "error" | "info", onUndo?: () => void) => setToast({message, tone, onUndo});
 
   useEffect(() => {
@@ -207,7 +237,7 @@ export function SalesToday({
     <div className="dashboard-content sales-today-content">
       <div className="page-heading sales-today-heading">
         <div><p className="eyebrow">{todayLabel}</p><h1>{t("today")}</h1></div>
-        <Link className="primary-button compact-button touch-target" href={`/${locale}/dashboard/new-lead`}><Icon name="add" size={18} />{t("addLead")}</Link>
+        <div className="sales-today-actions"><PushReminderButton organizationId={organizationId} /><Link className="primary-button compact-button touch-target" href={`/${locale}/dashboard/new-lead`}><Icon name="add" size={18} />{t("addLead")}</Link></div>
       </div>
       <Tabs direction={locale === "ar" ? "rtl" : "ltr"} label={t("salesTodayTabs")} items={[
         {id: "today", label: t("today"), icon: "calendar"},
@@ -216,10 +246,12 @@ export function SalesToday({
       {syncStatus !== "idle" && <p aria-live="polite" className={`sync-indicator sync-${syncStatus}`} role="status"><Icon name={syncStatus === "error" ? "warning" : "info"} size={16} />{syncStatus === "syncing" ? t("syncingPending") : syncStatus === "error" ? t("syncFailed") : t("queuedPending", {count: readPendingMutations(organizationId).length})}</p>}
 
       {tab === "today" ? <section aria-label={t("todayTasksHeading")} className="sales-today-section">
-        <div className="section-heading"><div><h2>{t("todayTasksHeading")}</h2><p>{t("todayTasksDescription")}</p></div><span className="section-total">{activeTasks.length}</span></div>
+        <div className="section-heading"><div><h2>{t("todayTasksHeading")}</h2><p>{t("todayTasksDescription")}</p></div><span className="section-total">{todayItems.length}</span></div>
         <div className="today-task-list">
-          {activeTasks.map((task) => <TaskRowItem currentTime={currentTime} key={task.id} locale={locale} onMessage={notify} onUndo={undoCompletedTask} task={task} timezone={timezone} />)}
-          {!activeTasks.length && <EmptyState action={<button className="secondary-button compact-button" onClick={() => setTab("whatsapp")} type="button"><Icon name="whatsapp-queue" size={18} />{t("openWhatsappQueue")}</button>} description={t("todayEmptyDescription")} illustration="empty-tasks" title={t("todayEmptyTitle")} />}
+          {todayItems.map((item) => item.kind === "task"
+            ? <TaskRowItem currentTime={currentTime} key={`task-${item.task.id}`} locale={locale} onMessage={notify} onUndo={undoCompletedTask} task={item.task} timezone={timezone} />
+            : <WhatsAppLeadRow key={`lead-${item.lead.id}`} lead={item.lead} locale={locale} onMessage={notify} onOpenDetails={setSelectedLead} organizationId={organizationId} />)}
+          {!todayItems.length && <EmptyState action={<button className="secondary-button compact-button" onClick={() => setTab("whatsapp")} type="button"><Icon name="whatsapp-queue" size={18} />{t("openWhatsappQueue")}</button>} description={t("todayEmptyDescription")} illustration="empty-tasks" title={t("todayEmptyTitle")} />}
         </div>
       </section> : <section aria-label={t("whatsappQueue")} className="sales-today-section" id="whatsapp-queue">
         <div className="section-heading"><div><h2>{t("whatsappQueue")}</h2><p>{t("whatsappQueueDescription")}</p></div><span className="section-total">{queueLeads.length}</span></div>

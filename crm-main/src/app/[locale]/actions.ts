@@ -1,5 +1,6 @@
 "use server";
 
+import {createHash, randomBytes} from "node:crypto";
 import {revalidatePath} from "next/cache";
 import {redirect} from "next/navigation";
 import {parse as parseCsv} from "csv-parse/sync";
@@ -32,6 +33,8 @@ export type CreateLeadResult = {
   error: "auth" | "lead" | null;
   success: "created" | "duplicate" | null;
 };
+
+export type CreateSalesInviteResult = {url: string | null; error: "auth" | "forbidden" | "invite" | null};
 
 const emptyLeadFilePreview: LeadFilePreviewState = {headers: [], rows: [], error: null};
 const emptyLeadImport: LeadImportState = {created: 0, duplicates: 0, failed: 0, error: null};
@@ -98,6 +101,91 @@ export async function signUp(formData: FormData) {
   if (!data.session) redirect(`/${locale}?notice=account-created`);
 
   redirect(`/${locale}`);
+}
+
+export async function createSalesInvite(organizationId: string, locale: Locale): Promise<CreateSalesInviteResult> {
+  const supabase = await createClient();
+  const {data: {user}} = await supabase.auth.getUser();
+  if (!user) return {url: null, error: "auth"};
+
+  const {data: membership} = await supabase.from("memberships")
+    .select("role, is_active")
+    .eq("organization_id", organizationId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!membership?.is_active || (membership.role !== "owner" && membership.role !== "manager")) {
+    return {url: null, error: "forbidden"};
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const {error} = await supabase.rpc("create_sales_invite", {
+    target_organization_id: organizationId,
+    target_token_hash: tokenHash,
+  });
+  if (error) return {url: null, error: "invite"};
+
+  const origin = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  return {url: new URL(`/${locale}/invite/${token}`, origin).toString(), error: null};
+}
+
+export async function activateDefaultFollowUp(organizationId: string, locale: Locale) {
+  const supabase = await createClient();
+  const {data: {user}} = await supabase.auth.getUser();
+  if (!user) redirect(`/${locale}`);
+  const {error} = await supabase.rpc("activate_default_lead_workflow", {target_organization_id: organizationId});
+  if (error) redirect(`/${locale}/dashboard?notice=workflow-error`);
+  revalidatePath(`/${locale}/dashboard`);
+  redirect(`/${locale}/dashboard?notice=workflow-activated`);
+}
+
+export async function acceptSalesInvite(formData: FormData) {
+  const locale = getLocale(formData.get("locale"));
+  const token = getText(formData, "inviteToken");
+  const email = getText(formData, "email");
+  const password = getRawText(formData, "password");
+  if (token.length < 32 || !email || !password) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=auth`);
+
+  const supabase = await createClient();
+  const {error: authError} = await supabase.auth.signInWithPassword({email, password});
+  if (authError) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=auth`);
+
+  const {error} = await supabase.rpc("accept_organization_invite", {invite_token: token});
+  if (error) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=invite`);
+  redirect(`/${locale}/dashboard?notice=invite-accepted`);
+}
+
+export async function acceptCurrentSalesInvite(formData: FormData) {
+  const locale = getLocale(formData.get("locale"));
+  const token = getText(formData, "inviteToken");
+  const supabase = await createClient();
+  const {data: {user}} = await supabase.auth.getUser();
+  if (!user || token.length < 32) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=auth`);
+  const {error} = await supabase.rpc("accept_organization_invite", {invite_token: token});
+  if (error) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=invite`);
+  redirect(`/${locale}/dashboard?notice=invite-accepted`);
+}
+
+export async function createAccountFromInvite(formData: FormData) {
+  const locale = getLocale(formData.get("locale"));
+  const token = getText(formData, "inviteToken");
+  const email = getText(formData, "email");
+  const password = getRawText(formData, "password");
+  if (token.length < 32 || !email || password.length < 8) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=auth`);
+
+  const origin = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const supabase = await createClient();
+  const {data, error} = await supabase.auth.signUp({
+    email,
+    password,
+    options: {emailRedirectTo: `${origin}/${locale}/auth/callback?invite=${encodeURIComponent(token)}`},
+  });
+  if (error) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=auth`);
+  if (!data.session) redirect(`/${locale}/invite/${encodeURIComponent(token)}?notice=check-email`);
+
+  const {error: inviteError} = await supabase.rpc("accept_organization_invite", {invite_token: token});
+  if (inviteError) redirect(`/${locale}/invite/${encodeURIComponent(token)}?error=invite`);
+  redirect(`/${locale}/dashboard?notice=invite-accepted`);
 }
 
 export async function createOrganization(formData: FormData) {

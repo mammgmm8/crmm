@@ -12,6 +12,17 @@
 
 يدعم تسجيل البريد الإلكتروني تأكيد الحساب عبر `/[locale]/auth/callback`. اضبط `NEXT_PUBLIC_SITE_URL` على عنوان التطبيق وأضف مسار callback إلى قائمة إعادة التوجيه المسموح بها في إعدادات Supabase Auth عند النشر.
 
+## النشر على Vercel
+
+- استورد مستودع GitHub `mammgmm8/crmm` إلى Vercel، واجعل **Root Directory** هو `crm-main`. Next.js يحدد إطار العمل وأوامر البناء تلقائيًا.
+- أضف متغيرات `.env.example` في إعدادات Vercel لكل بيئة منشورة. بعد أول نشر، غيّر `NEXT_PUBLIC_SITE_URL` إلى عنوان `https://<your-app>.vercel.app` الذي خصصه Vercel، ثم أعد النشر.
+- أضف `https://<your-app>.vercel.app/**` إلى **Supabase → Authentication → URL Configuration → Redirect URLs**، واجعل رابط التطبيق نفسه **Site URL**.
+- أضف `NEXT_PUBLIC_VAPID_PUBLIC_KEY` إلى Vercel من قيمة `.env.local` المحلية. المفتاح الخاص `VAPID_PRIVATE_KEY`، و`WORKFLOW_CRON_SECRET`، و`RESEND_API_KEY` تبقى أسرارا في Supabase ولا توضع في Vercel أو Git.
+- نطاق `vercel.app` مجاني للاستضافة؛ راجع شروط الخطة الحالية قبل استخدام خطة مجانية لنظام أعمال تجاري.
+- بعد رفع آخر commit على GitHub، ينشر Vercel تلقائيًا من الفرع المرتبط. لا ترفع `.env.local` أو ملف الأسرار المؤقت.
+
+واجهة السيلز تعمل كتطبيق PWA قابل للتثبيت. لا تُخزّن الصفحات المحمية دون اتصال؛ تحفظ التفاعلات غير المتصلة محليًا وتزامنها عند عودة الشبكة. يتطلب Web Push اتصال HTTPS (أو localhost) وموافقة المستخدم من شاشة «اليوم».
+
 ## قاعدة البيانات والأمان
 
 - ترحيل المخطط وRLS: `supabase/migrations/20260930000000_initial_schema.sql`.
@@ -31,8 +42,18 @@ supabase functions deploy workflow-worker
 supabase secrets set WORKFLOW_CRON_SECRET='<same-vault-secret>' RESEND_API_KEY='<resend-api-key>' IMPACT_REPORT_FROM_EMAIL='Masar Reports <reports@example.com>'
 ```
 
+- لتفعيل تذكيرات المهام بالبريد وWeb Push، أنشئ مفاتيح VAPID عبر `npx --yes web-push@3.6.7 generate-vapid-keys --json`. أضف المفتاح العام بشكل دائم إلى `.env.local` ثم أعد تشغيل Next.js. أرسل بقية الأسرار وعنوان المرسل الموثق إلى Supabase:
+
+```bash
+supabase secrets set VAPID_PUBLIC_KEY='<vapid-public-key>' VAPID_PRIVATE_KEY='<vapid-private-key>' VAPID_SUBJECT='mailto:notifications@example.com' REMINDER_FROM_EMAIL='Masar Reminders <reminders@example.com>'
+```
+
+- يختار مندوب المبيعات «تفعيل تذكيرات المتصفح» مرة واحدة. يرسل العامل المجدول تذكير المهمة إلى البريد المسجل، ويرسل Push للأجهزة التي وافقت؛ يعيد المحاولة تلقائيًا ويحذف اشتراكات Push المنتهية.
+
 - يرسل التقرير الأسبوعي بصيغة PDF إلى مالك المؤسسة. أدخل متوسط قيمة الصفقة ومعدل الإغلاق من إعدادات المؤسسة؛ الإيراد المحمي تقدير وليس إيرادًا محققًا.
 - استقبال العملاء اليدوي وCSV/XLSX والويبهوك يمر عبر مسار إنشاء موحد؛ تُحوّل أرقام مصر والسعودية إلى E.164 وتُفحص التكرارات داخل المؤسسة مع تسجيل `lead.created` أو `lead.duplicate_detected` في `lead_events`.
+- عند إنشاء المؤسسة تُجهّز مراحل العقار وقواعد التوزيع والمتابعة والتصعيد تلقائيًا. تعرض لوحة المدير checklist دائمًا: دعوة sales برابط لمرة واحدة وصلاحية 7 أيام، استيراد CSV بمطابقة الأعمدة الذكية أو إضافة أول lead يدويًا، ثم تأكيد التوزيع. يفتح حساب sales شاشة Today مباشرة بعد قبول الدعوة.
+- اختبر دعوات الانضمام عبر `npm run test:onboarding` بعد تشغيل Supabase المحلي.
 
 ## استقبال العملاء
 

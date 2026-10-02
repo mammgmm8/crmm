@@ -105,6 +105,10 @@ export default async function HomePage({
             <input id="signup-password" name="password" type="password" autoComplete="new-password" placeholder={t("password")} minLength={8} required disabled={!hasSupabase} />
             <button className="secondary-button" type="submit" disabled={!hasSupabase}>{t("signUp")}</button>
           </form>
+          {process.env.NODE_ENV === "development" && <Link className="secondary-button demo-entry" href={`/${locale}/demo`}>
+            <Icon name="dashboard" size={18} />
+            {locale === "ar" ? "معاينة النظام دون تسجيل" : "Open read-only demo"}
+          </Link>}
         </div>
       </section>
     </main>

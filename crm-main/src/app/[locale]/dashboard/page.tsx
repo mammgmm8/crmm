@@ -11,6 +11,7 @@ import {Badge, EmptyState, Table, TableRow} from "@/components/ui/primitives";
 import {Icon} from "@/components/ui/icon";
 import {KpiCard} from "@/components/ui/kpi-card";
 import {SalesToday} from "@/components/sales-today";
+import {OnboardingChecklist} from "@/components/onboarding-checklist";
 import type {ImpactDashboardSummary, LeadRow, ManagerDashboardMetrics, NotificationRow, OrganizationRow, TaskRow} from "@/lib/supabase/database";
 
 function firstParam(value: string | string[] | undefined) {
@@ -92,12 +93,15 @@ export default async function DashboardPage({
   const startDate = isDateParam(requestedStart) && requestedStart! <= endDate && Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${requestedStart}T00:00:00Z`) <= 90 * 24 * 60 * 60 * 1000
     ? requestedStart!
     : daysBefore(endDate, 29);
-  const [salesMembersResponse, stagesResponse] = isManager ? await Promise.all([
+  const [salesMembersResponse, stagesResponse, workflowRulesResponse] = isManager ? await Promise.all([
     supabase.rpc("get_workflow_sales_members", {target_organization_id: membership.organization_id}),
     supabase.from("pipeline_stages").select("id, name, name_ar, position").eq("organization_id", membership.organization_id).order("position"),
-  ]) : [null, null];
+    supabase.from("automation_rules").select("rule_key, enabled").eq("organization_id", membership.organization_id).in("rule_key", ["lead.auto_assign", "lead.required_follow_up", "task.escalate_overdue"]),
+  ]) : [null, null, null];
   const salesMembers = salesMembersResponse?.data ?? [];
   const stages = stagesResponse?.data ?? [];
+  const workflowRules = workflowRulesResponse?.data ?? [];
+  const followUpWorkflowReady = ["lead.auto_assign", "lead.required_follow_up", "task.escalate_overdue"].every((ruleKey) => workflowRules.some((rule) => rule.rule_key === ruleKey && rule.enabled));
   const requestedSalesperson = firstParam(query.salesperson) ?? "";
   const requestedStage = firstParam(query.stage) ?? "";
   const selectedSalespersonId = salesMembers.some((person) => person.sales_user_id === requestedSalesperson) ? requestedSalesperson : "";
@@ -144,6 +148,13 @@ export default async function DashboardPage({
   const leads = (leadRows ?? []) as LeadRow[];
   const tasks = (taskRows ?? []) as TaskRow[];
   const notifications = (notificationRows ?? []) as NotificationRow[];
+  const activeSalesIds = salesMembers.filter((person) => person.is_active).map((person) => person.sales_user_id);
+  const {count: assignedSalesLeadCount} = isManager && activeSalesIds.length
+    ? await supabase.from("leads").select("id", {count: "exact", head: true})
+      .eq("organization_id", org.id)
+      .eq("assignment_status", "assigned")
+      .in("assigned_to", activeSalesIds)
+    : {count: 0};
   const now = new Date().getTime();
   const todayLabel = new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-US", {weekday: "long", day: "numeric", month: "long", timeZone: org.timezone}).format(new Date(now));
   const numberFormat = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en-US");
@@ -181,6 +192,19 @@ export default async function DashboardPage({
 
           {firstParam(query.notice) === "duplicate" && <p className="form-alert" role="status">{t("duplicateLead")}</p>}
           {firstParam(query.notice) === "created" && <p className="form-success" role="status">{t("leadCreated")}</p>}
+          {firstParam(query.notice) === "invite-accepted" && <p className="form-success" role="status">{locale === "ar" ? "انضممت إلى فريق المبيعات. هذه قائمة متابعات اليوم." : "You joined the sales team. Here is your Today list."}</p>}
+          {firstParam(query.notice) === "workflow-activated" && <p className="form-success" role="status">{locale === "ar" ? "تم تفعيل التوزيع والمتابعة والتصعيد التلقائي." : "Automatic assignment, follow-up and escalation are active."}</p>}
+          {firstParam(query.notice) === "workflow-error" && <p className="form-alert" role="alert">{locale === "ar" ? "تعذر تفعيل سير المتابعة. تحقق من إعدادات المؤسسة." : "Could not activate the default follow-up workflow. Check organization setup."}</p>}
+
+          {isManager && <OnboardingChecklist
+            hasActiveSalesperson={salesMembers.some((person) => person.is_active)}
+            hasDistributedLead={Boolean(assignedSalesLeadCount)}
+            hasPipeline={stages.length > 0}
+            leads={leads}
+            locale={locale as "ar" | "en"}
+            organizationId={org.id}
+            workflowActive={followUpWorkflowReady}
+          />}
 
           {isManager && <ManagerDashboard
             currency={org.currency}
@@ -189,7 +213,7 @@ export default async function DashboardPage({
             isOwner={membership.role === "owner"}
             locale={locale as "ar" | "en"}
             metrics={managerMetrics}
-            metricsError={managerMetricsError || Boolean(salesMembersResponse?.error || stagesResponse?.error)}
+            metricsError={managerMetricsError || Boolean(salesMembersResponse?.error || stagesResponse?.error || workflowRulesResponse?.error)}
             salesMembers={salesMembers}
             selectedSalespersonId={selectedSalespersonId}
             selectedStageId={selectedStageId}

@@ -7,7 +7,7 @@ import type {NotificationRow, OrganizationRow, OrganizationRole} from "@/lib/sup
 import {Icon} from "@/components/ui/icon";
 import {Motion} from "@/components/ui/motion";
 
-type AppPage = "overview" | "new-lead" | "settings";
+type AppPage = "overview" | "new-lead" | "pipeline" | "settings";
 
 export async function AppShell({
   children,
@@ -19,6 +19,7 @@ export async function AppShell({
   notifications = [],
   leadCount = 0,
   todayTaskCount = 0,
+  demo = false,
 }: {
   children: React.ReactNode;
   locale: Locale;
@@ -29,6 +30,7 @@ export async function AppShell({
   notifications?: NotificationRow[];
   leadCount?: number;
   todayTaskCount?: number;
+  demo?: boolean;
 }) {
   const [t, orgT] = await Promise.all([
     getTranslations("dashboard"),
@@ -36,17 +38,28 @@ export async function AppShell({
   ]);
   const routeSuffix = page === "settings"
     ? "/settings"
+    : page === "pipeline"
+      ? "/dashboard/pipeline"
     : page === "new-lead"
       ? "/dashboard/new-lead"
       : "/dashboard";
   const alternateLocale: Locale = locale === "ar" ? "en" : "ar";
   const numberFormat = new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en-US");
+  const demoHref = (view: AppPage = "overview") => `/${locale}/demo${view === "overview" ? "" : `?view=${view}`}`;
+  const overviewHref = demo ? demoHref() : `/${locale}/dashboard`;
+  const leadsHref = demo ? `${demoHref()}#leads` : `/${locale}/dashboard#leads`;
+  const tasksHref = demo ? `${demoHref()}#tasks` : `/${locale}/dashboard#tasks`;
+  const pipelineHref = demo ? `${demoHref()}#pipeline` : `/${locale}/dashboard/pipeline`;
+  const settingsHref = demo ? demoHref("settings") : `/${locale}/settings`;
+  const localeHref = demo
+    ? `/${alternateLocale}/demo${page === "overview" ? "" : `?view=${page}`}`
+    : `/${alternateLocale}${routeSuffix}`;
 
   return (
     <main className="workspace-shell">
       <aside aria-label={locale === "ar" ? "التنقل الرئيسي" : "Main navigation"} className="workspace-sidebar">
-        <Link className="brand-lockup sidebar-brand" href={`/${locale}/dashboard`}>
-          <Image alt={locale === "ar" ? "مسار" : "Masar"} height={44} src="/brand/masar-logo.svg" width={118} />
+        <Link className="brand-lockup sidebar-brand" href={overviewHref}>
+          <Image alt={locale === "ar" ? "مسار" : "Masar"} height={44} src="/brand/masar-logo-dark.svg" width={118} />
         </Link>
         <div className="org-switcher">
           <span className="org-avatar"><Icon name="company" size={18} /></span>
@@ -55,28 +68,28 @@ export async function AppShell({
         </div>
         <p className="nav-caption">{t(role === "sales" ? "today" : "overview")}</p>
         <nav aria-label={locale === "ar" ? "أقسام مساحة العمل" : "Workspace sections"} className="main-nav">
-          <Link aria-current={page === "overview" ? "page" : undefined} className={`nav-item${page === "overview" ? " nav-item-active" : ""}`} href={`/${locale}/dashboard`}><Icon name={role === "sales" ? "calendar" : "dashboard"} size={18} />{t(role === "sales" ? "today" : "overview")}</Link>
-          {role === "sales" && <Link className="nav-item" href={`/${locale}/dashboard#whatsapp-queue`}><Icon name="whatsapp-queue" size={18} />{t("whatsappQueue")}</Link>}
-          <Link aria-current={page === "new-lead" ? "page" : undefined} className={`nav-item${page === "new-lead" ? " nav-item-active" : ""}`} href={`/${locale}/dashboard#leads`}><Icon name="leads" size={18} />{t("leads")}<span className="nav-count">{numberFormat.format(leadCount)}</span></Link>
-          <Link className="nav-item" href={`/${locale}/dashboard#tasks`}><Icon name="tasks" size={18} />{t("tasks")}<span className="nav-count">{numberFormat.format(todayTaskCount)}</span></Link>
-          {(role === "owner" || role === "manager") && <Link className="nav-item" href={`/${locale}/dashboard#pipeline`}><Icon name="reports" size={18} />{t("pipeline")}</Link>}
+          <Link aria-current={page === "overview" ? "page" : undefined} className={`nav-item${page === "overview" ? " nav-item-active" : ""}`} href={overviewHref}><Icon name={role === "sales" ? "calendar" : "dashboard"} size={18} />{t(role === "sales" ? "today" : "overview")}</Link>
+          {role === "sales" && <Link className="nav-item" href={demo ? `${demoHref()}#whatsapp-queue` : `/${locale}/dashboard#whatsapp-queue`}><Icon name="whatsapp-queue" size={18} />{t("whatsappQueue")}</Link>}
+          <Link aria-current={page === "new-lead" ? "page" : undefined} className={`nav-item${page === "new-lead" ? " nav-item-active" : ""}`} href={leadsHref}><Icon name="leads" size={18} />{t("leads")}<span className="nav-count">{numberFormat.format(leadCount)}</span></Link>
+          <Link className="nav-item" href={tasksHref}><Icon name="tasks" size={18} />{t("tasks")}<span className="nav-count">{numberFormat.format(todayTaskCount)}</span></Link>
+          {(role === "owner" || role === "manager") && <Link aria-current={page === "pipeline" ? "page" : undefined} className={`nav-item${page === "pipeline" ? " nav-item-active" : ""}`} href={pipelineHref}><Icon name="reports" size={18} />{t("pipeline")}</Link>}
+          {(role === "owner" || role === "manager") && <Link aria-current={page === "settings" ? "page" : undefined} className={`nav-item${page === "settings" ? " nav-item-active" : ""}`} href={settingsHref}><Icon name="settings" size={18} />{orgT("settings")}</Link>}
         </nav>
-          {(role === "owner" || role === "manager") && (
-            <Link aria-current={page === "settings" ? "page" : undefined} className={`nav-item${page === "settings" ? " nav-item-active" : ""}`} href={`/${locale}/settings`}><Icon name="settings" size={18} />{orgT("settings")}</Link>
-          )}
         <div className="sidebar-bottom">
           <div className="timezone-note"><Icon name="calendar" size={16} /><span>{organization.timezone}</span></div>
-          <form action={signOut.bind(null, locale)}>
-            <button className="nav-item sign-out-button" type="submit"><Icon className="icon-flip" name="logout" size={18} />{t("signOut")}</button>
-          </form>
+          {demo
+            ? <Link className="nav-item sign-out-button" href={`/${locale}`}><Icon className="icon-flip" name="logout" size={18} />{locale === "ar" ? "العودة لتسجيل الدخول" : "Back to sign in"}</Link>
+            : <form action={signOut.bind(null, locale)}>
+              <button className="nav-item sign-out-button" type="submit"><Icon className="icon-flip" name="logout" size={18} />{t("signOut")}</button>
+            </form>}
         </div>
       </aside>
 
       <section className="workspace-main">
         <header className="workspace-topbar">
-          <div className="breadcrumb"><span>{organization.name}</span><Icon className="icon-flip" name="arrow-end" size={14} /><strong>{page === "settings" ? orgT("settings") : page === "new-lead" ? t("leads") : t(role === "sales" ? "today" : "overview")}</strong></div>
+          <div className="breadcrumb"><span>{organization.name}</span><Icon className="icon-flip" name="arrow-end" size={14} /><strong>{page === "settings" ? orgT("settings") : page === "pipeline" ? t("pipeline") : page === "new-lead" ? t("leads") : t(role === "sales" ? "today" : "overview")}</strong></div>
           <div className="topbar-actions">
-            <Link aria-label={locale === "ar" ? "Switch to English" : "التبديل إلى العربية"} className="locale-switch topbar-locale" href={`/${alternateLocale}${routeSuffix}`} hrefLang={alternateLocale}>{locale === "ar" ? "EN" : "ع"}</Link>
+            <Link aria-label={locale === "ar" ? "Switch to English" : "التبديل إلى العربية"} className="locale-switch topbar-locale" href={localeHref} hrefLang={alternateLocale}>{locale === "ar" ? "EN" : "ع"}</Link>
             <details className="notification-menu">
               <summary aria-label={locale === "ar" ? "التنبيهات" : "Notifications"} className="icon-button touch-target" title={locale === "ar" ? "التنبيهات" : "Notifications"}>
                 <Icon name="notifications" size={20} />

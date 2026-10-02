@@ -1,8 +1,9 @@
 import type {SupabaseClient} from "@supabase/supabase-js";
-import type {Database} from "@/lib/supabase/database";
+import type {Database, SalesOutcome} from "@/lib/supabase/database";
 
 export type PendingMutation =
   | {key: string; table: "leads"; organizationId: string; id: string; changes: {status: Database["public"]["Tables"]["leads"]["Row"]["status"]}}
+  | {key: string; table: "lead_interactions"; organizationId: string; id: string; changes: {interactionId: string; outcome: SalesOutcome}}
   | {key: string; table: "tasks"; organizationId: string; id: string; changes: {completed_at: string | null}};
 
 const storageKey = "masar:pending-mutations:v1";
@@ -44,7 +45,14 @@ export async function flushPendingMutations(client: SupabaseClient<Database>, or
   for (const item of queue) {
     const result = item.table === "leads"
       ? await client.from("leads").update(item.changes).eq("id", item.id).eq("organization_id", item.organizationId)
-      : await client.from("tasks").update(item.changes).eq("id", item.id).eq("organization_id", item.organizationId);
+      : item.table === "tasks"
+        ? await client.from("tasks").update(item.changes).eq("id", item.id).eq("organization_id", item.organizationId)
+        : await client.rpc("log_sales_outcome", {
+          target_organization_id: item.organizationId,
+          target_lead_id: item.id,
+          target_interaction_id: item.changes.interactionId,
+          target_outcome: item.changes.outcome,
+        });
     if (result.error) failedKeys.add(item.key);
   }
 

@@ -3,11 +3,19 @@ import {hasLocale, NextIntlClientProvider} from "next-intl";
 import {notFound} from "next/navigation";
 import {setRequestLocale} from "next-intl/server";
 import {routing} from "@/i18n/routing";
+import {PwaRegistration} from "@/components/pwa-registration";
+import "../globals.css";
 
 export const metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: "Masar | Real estate lead follow-up",
   description: "Keep every real estate lead assigned, followed up, and visible to your team.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {capable: true, statusBarStyle: "default", title: "Masar"},
+  icons: {apple: "/brand/apple-touch-icon.png"},
 };
+
+export const viewport = {themeColor: "#0b3b3c"};
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({locale}));
@@ -27,6 +35,7 @@ export default async function LocaleLayout({
   return (
     <html lang={locale} dir={locale === "ar" ? "rtl" : "ltr"}>
       <body>
+        <PwaRegistration />
         <NextIntlClientProvider>{children}</NextIntlClientProvider>
       </body>
     </html>

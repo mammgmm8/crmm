@@ -11,6 +11,8 @@
     "db:reset": "npx --yes supabase db reset",
     "test:rls": "npx --yes supabase test db",
     "test:workflow": "npx --yes supabase test db supabase/tests/workflow.test.sql",
+    "test:sales-experience": "npx --yes supabase test db supabase/tests/sales-experience.test.sql",
+    "test:onboarding": "npx --yes supabase test db supabase/tests/onboarding-invites.test.sql",
     "test:impact": "npx --yes supabase test db supabase/tests/impact-report.test.sql"
   },
   "dependencies": {
